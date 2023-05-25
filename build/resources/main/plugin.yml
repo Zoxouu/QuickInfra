@@ -1,0 +1,7 @@
+name: QuickInfra
+version: '0.1'
+main: me.zoxymodz.infra.QuickInfra
+authors: [Zoxouu]
+commands:
+  host:
+    description: test create server
