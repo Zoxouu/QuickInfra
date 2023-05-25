@@ -1,115 +1,129 @@
 package me.zoxymodz.infra.manager;
 
 import lombok.Getter;
+import lombok.NonNull;
 import me.zoxymodz.infra.QuickInfra;
-import me.zoxymodz.infra.provider.ServerType;
+import me.zoxymodz.infra.provider.ServerTypes;
 import net.md_5.bungee.api.config.ServerInfo;
-import org.apache.commons.io.FileUtils;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
-import java.net.URL;
-import java.nio.charset.Charset;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-public class Server {
-    @Getter
-    private int port;
-    private static int ports = 25570;
-    @Getter
-    private String name;
-    @Getter
-    private ServerType st;
-    @Getter
-    private ServerInfo si;
-    private static final String SPIGOT_VERSION = "1.8.8-R0.1-SNAPSHOT-latest";
-    @Getter
-    private static List<Server> servs = new ArrayList<>();
+import javax.annotation.Nullable;
 
-    public Server(String name,ServerType st) {
+public class Server {
+    private String name;
+    private ServerTypes serverType;
+    private ServerInfo serverInfo;
+    private static int port = 25570;
+    private static final String SPIGOT_VERSION = "1.8.8-R0.1-SNAPSHOT-latest";
+    private static List<Server> servs = new ArrayList<>();
+    @Getter
+    private static int serversNumbers;
+
+    public Server(@NonNull String name, ServerTypes st) {
         this.name = name;
-        this.si = createServer(st);
-        this.port = ports;
-        QuickInfra.getProxyServer().getServers().put(st.getName(), si);
+        this.serverType = st;
+        this.serverInfo = createServer();
+        QuickInfra.instance.getProxy().getServers().put(serverType.getName(), serverInfo);
         servs.add(this);
     }
-    public static Server getServerWithName(String name){
-        return servs.stream().filter(server -> server.getName().equals(name)).findAny().orElse(null);
-                    }
-    public static Server getServerWithPort(int port){
-        return servs.stream().filter(server -> server.getPort() == port).findAny().orElse(null);
+
+    public static Server getServerWithName(String name) {
+        return servs.stream().filter(server -> server.name.equals(name)).findAny().orElse(null);
     }
-    public static List<Server> getServersWithType(ServerType st){
-        return servs.stream().filter(server -> server.getSt().equals(st)).collect(Collectors.toList());
+
+    public static List<Server> getServersWithType(@NonNull ServerTypes st) {
+        return servs.stream().filter(server -> server.serverType.equals(st)).collect(Collectors.toList());
     }
+
     public void removeServer() {
         try {
             // Récupère le serveur Spigot avec le nom spécifié
-            ServerInfo server = si;
-            if (server == null) {
-                System.out.println("Le serveur " + getName() + " n'existe pas.");
+            if (serverInfo == null) {
+                System.out.println("Le serveur " + name + " n'existe pas.");
                 return;
             }
 
             // Arrête le serveur Spigot
             ProcessBuilder pb = new ProcessBuilder("/bin/bash", "stop.sh");
-            pb.directory(new File(getName()));
+            pb.directory(new File(name));
             pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
             pb.redirectError(ProcessBuilder.Redirect.INHERIT);
             pb.start().waitFor();
 
             // Supprime le dossier du serveur Spigot
-            FileUtils.deleteDirectory(new File(getName()));
+            Files.deleteIfExists(Paths.get(name));
 
             // Retire le serveur de la liste des serveurs disponibles
-            QuickInfra.getProxyServer().getServers().remove(getName());
+            QuickInfra.instance.getProxy().getServers().remove(name);
             servs.remove(this);
-            System.out.println("Le serveur " + getName() + " a été supprimé.");
+            System.out.println("Le serveur " + name + " a été supprimé.");
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
     }
-    private ServerInfo createServer(ServerType serverName) {
+
+    @Nullable
+    private ServerInfo createServer() {
         try {
-            ports++;
+            port++;
+            serversNumbers ++;
             // Crée un nouveau dossier pour le serveur Spigot
-            File serverDir = new File(QuickInfra.getInstance().getDataFolder(), getName());
-            serverDir.mkdir();
+            Path serverDir = QuickInfra.instance.getDataFolder().toPath().resolve("servers").resolve(name);
+            if(Files.notExists(serverDir)) Files.createDirectories(serverDir);
             // Télécharge Spigot
-            File spigotFile = new File(serverDir, "spigot.jar");
+            Path spigotFile = serverDir.resolve("spigot.jar");
             String spigotUrl = "https://cdn.getbukkit.org/spigot/spigot-" + SPIGOT_VERSION + ".jar";
-            FileUtils.copyURLToFile(new URL(spigotUrl), spigotFile);
+            try(InputStream is = URI.create(spigotUrl).toURL().openStream()) {
+                Files.copy(is, spigotFile, StandardCopyOption.REPLACE_EXISTING);
+            }
 
             // Crée le fichier de configuration Spigot
-            File configFile = new File(serverDir, "server.properties");
-            FileUtils.writeStringToFile(configFile, "server-port="+ports+"\n", Charset.defaultCharset());
-
+            Path configFile = serverDir.resolve("server.properties");
+            writeString(configFile, "server-port=" + port + "\n");
+            writeString(serverDir.resolve("eula.txt"), "eula=true");
             // Crée le script de démarrage du serveur
-            File startScript = new File(serverDir, "start.sh");
-            String command = "#!/bin/bash\nhere=$(basename `pwd`)\nscreen -dmS $here java "+ serverName.getRam() + " -jar spigot.jar";
-            FileUtils.writeStringToFile(startScript, command, Charset.defaultCharset());
-            startScript.setExecutable(true);
-            Thread.sleep(10000);
+            Path startScript = serverDir.resolve("start.sh");
+            String command = "#!/bin/bash\nhere=$(basename `pwd`)\nscreen -dmS $here java " + serverType.getRam() + " -jar spigot.jar";
+            writeString(startScript, command);
+            startScript.toFile().setExecutable(true);
+            // Thread.sleep(10000);
 
             // Lance le script de démarrage du serveur
-            ProcessBuilder pb = new ProcessBuilder("/bin/bash", startScript.getAbsolutePath());
-            pb.start();
+            new ProcessBuilder("/bin/bash", "start.sh").directory(serverDir.toFile()).start();
 
             System.out.println("Le server a bien été cree et c'est lancer");
             // Crée un nouveau serveur Spigot avec le nom spécifié
-           return QuickInfra.getProxyServer().constructServerInfo(
-                   getName(),
-                    new InetSocketAddress("localhost", ports),
+            return QuickInfra.instance.getProxy().constructServerInfo(
+                    name,
+                    new InetSocketAddress("localhost", port),
                     "Un serveur Spigot à la demande",
-                    false
-            );
+                    false);
             // Ajoute le serveur à la liste des serveurs disponibles
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException /* | InterruptedException */ e) {
             e.printStackTrace();
         }
         return null;
+    }
+
+    public static void writeString(Path path, String str) throws IOException {
+        writeString(path, str, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+    }
+
+    public static void writeString(Path path, String str, StandardOpenOption... options) throws IOException {
+        Files.write(path, str.getBytes(StandardCharsets.UTF_8), options);
     }
 }
